@@ -1,0 +1,76 @@
+services:
+
+  # Docker-in-Docker service.
+  # Jenkins communicates with this daemon over a private Docker network.
+  docker:
+    image: docker:29-dind
+    container_name: jenkins-docker
+
+    # DinD requires privileged mode to create containers.
+    # Privilege is limited to this supporting service; Jenkins itself
+    # is not run as root or privileged.
+    privileged: true
+
+    restart: unless-stopped
+
+    environment:
+      # Enable TLS for communication with the Docker daemon.
+      DOCKER_TLS_CERTDIR: /certs
+
+    volumes:
+      # Stores TLS certificates used by Jenkins to authenticate to Docker.
+      - jenkins-docker-certs:/certs/client
+
+      # Shared Jenkins workspace so Docker can access build files.
+      - jenkins-data:/var/jenkins_home
+
+    networks:
+      - jenkins-network
+
+    command: --storage-driver=overlay2
+
+
+  # Jenkins CI/CD controller.
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: jenkins-controller
+
+    restart: unless-stopped
+
+    depends_on:
+      - docker
+
+    # Security hardening:
+    # Jenkins is accessible only from this Ubuntu machine.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    environment:
+      # Connect Jenkins Docker CLI to the DinD service using TLS.
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+
+    volumes:
+      # Persistent Jenkins configuration, jobs and build history.
+      - jenkins-data:/var/jenkins_home
+
+      # Jenkins only needs to read the Docker client certificates.
+      - jenkins-docker-certs:/certs/client:ro
+
+    networks:
+      - jenkins-network
+
+
+# Persistent Docker-managed volumes.
+volumes:
+  jenkins-data:
+  jenkins-docker-certs:
+
+
+# Private network used for Jenkins-to-Docker communication.
+networks:
+  jenkins-network:
